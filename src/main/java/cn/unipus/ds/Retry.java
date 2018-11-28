@@ -1,17 +1,18 @@
 package cn.unipus.ds;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import java.util.*;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 
 public class Retry {
-	private static final Logger logger = LoggerFactory.getLogger(Retry.class);
+	private static final Logger logger = LogManager.getLogger();
 
 	public static final String RETRY_TIMES_ENV = "RETRY_TIMES";
 
@@ -60,18 +61,30 @@ public class Retry {
 	}
 
 	public static <T> T retry(final Callable<T> callable) throws Exception {
-		return retry(callable, RETRY_TIMES, BACKOFF_FACTOR, NEED_RETRY_EXCEPTIONS);
+		return retry(callable, getRetryTimes(), getBackoffFactor(), getNeedRetryExceptions());
+	}
+
+	protected static List<Class> getNeedRetryExceptions() {
+		return NEED_RETRY_EXCEPTIONS;
+	}
+
+	protected static int getBackoffFactor() {
+		return BACKOFF_FACTOR;
+	}
+
+	protected static int getRetryTimes() {
+		return RETRY_TIMES;
 	}
 
 	public static <T> T retry(final Callable<T> callable, int times, long backoffFactor) throws Exception {
-		return retry(callable, times, backoffFactor, NEED_RETRY_EXCEPTIONS);
+		return retry(callable, times, backoffFactor, getNeedRetryExceptions());
 	}
 
-	public static <T> T retryIt(Callable<T> callable, Iterator waitIterator) throws Exception {
-		return retryIt(callable, waitIterator, NEED_RETRY_EXCEPTIONS);
+	public static <T> T retry(Callable<T> callable, Iterator waitIterator) throws Exception {
+		return retry(callable, waitIterator, getNeedRetryExceptions());
 	}
 
-	public static <T> T retryIt(Callable<T> callable, Iterator waitIterator, List<Class> exceptionClasses) throws Exception{
+	public static <T> T retry(Callable<T> callable, Iterator waitIterator, List<Class> exceptionClasses) throws Exception{
 		List<T> ts = new ArrayList<>(1);
 
 		boolean STOP = true;
@@ -103,22 +116,27 @@ public class Retry {
 				});
 
 		if (ts.size() < 1) {
-			throw new Exception(String.format("Retry %d times, but failed.", 5));
+			throw new RetryException(String.format("Retry %d times, but failed.", 5));
 		} else {
 			return ts.get(0);
 		}
 	}
 
-
 	public static <T> T retry(Callable<T> callable, int times,
-						long backoffFactor,
+						long backoff,
 						List<Class> exceptionClasses) throws Exception{
+		if (times < 0) {
+			times = 0;
+		}
+
+		final long backoffFactor = backoff <= 0 ? 1 : backoff;
+
 		List<T> ts = new ArrayList<>(1);
 
 		boolean STOP = true;
 		boolean CONTINUE = false;
 
-		Stream.iterate(0, x -> x + 1).limit(times)
+		Stream.iterate(0, x -> x + 1).limit(times + 1)
 				.anyMatch(idx -> {
 					try {
 						T t = callable.call();
@@ -128,8 +146,6 @@ public class Retry {
 						return STOP;
 					} catch (Exception e) {
 						logger.warn("Failed: {} - {}", idx, e);
-						e.printStackTrace();
-
 						if (exceptionClasses.stream().anyMatch(c -> c.isInstance(e))) {
 							try {
 								Thread.sleep((long) (backoffFactor * Math.pow(2, idx)));
@@ -145,9 +161,15 @@ public class Retry {
 				});
 
 		if (ts.size() < 1) {
-			throw new Exception(String.format("Retry %d times, but failed.", times));
+			throw new RetryException(String.format("Retry %d times, but failed.", times));
 		} else {
 			return ts.get(0);
+		}
+	}
+
+	private static class RetryException extends Exception {
+		RetryException(String msg) {
+			super(msg);
 		}
 	}
 }
